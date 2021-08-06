@@ -1,0 +1,114 @@
+---
+title: "ENV Abundance 2021"
+author: "Rebecca M. Grimwood"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library imports
+```{r libraries, message=FALSE, warning=FALSE}
+
+library(reshape2)
+library(viridis)
+library(ggplot2)
+
+```
+
+
+## ENV vs RPS13 Abundance
+```{r env}
+
+## Standardised abundances calculated by summing RSEM abundances for each contig annotated
+## as (e.g.) env or RPS13, and dividing by the total reads for that library/sample.
+
+## Required files:
+## env_norm_abundances_2021
+## rps13_norm_abundances_2021
+
+# ENV abundance plot
+
+# Read in normalised ENV abundances
+env_abun = read.table("Data/env_norm_abundances_2021.csv", sep=",", header=F, row.names = 1)
+
+# Fix row names
+rownames(env_abun) = c("Moribund", "Harvest")
+
+# Make df
+env_abun = as.data.frame(env_abun)
+
+# Transpose
+tenv = t(env_abun)
+
+# Melt and rename columns
+meltedenv = melt(tenv)
+colnames(meltedenv) = c("1", "Group", "Standardised total raw reads")
+
+# Make plot
+ggplot(meltedenv, aes(x=Group, y=`Standardised total raw reads`, fill=Group)) + 
+  geom_boxplot() + geom_jitter(color="black", size=1, alpha=0.5) + ggtitle("ENV expression per group")
+
+
+
+
+
+
+## RPS13 abundance plot
+
+# Read in RPS13 abundances
+rps_abun = read.table("Data/rps13_norm_abundances_2021.csv", sep=",", header=F, row.names = 1)
+
+# Fix row names
+rownames(rps_abun) = c("Moribund", "Harvest")
+
+# Make df - ?
+rps_abun = as.data.frame(rps_abun)
+
+# Transpose
+rps_abun = t(rps_abun)
+
+# Melt and rename columns
+meltedrps= melt(rps_abun)
+colnames(meltedrps) = c("1", "Group", "Standardised total raw reads")
+
+ggplot(meltedrps, aes(x=Group, y=`Standardised total raw reads`, fill=Group)) + 
+  geom_boxplot() + geom_jitter(color="black", size=1, alpha=0.5) + ggtitle("RPS13 expression per group")
+
+
+```
+
+
+## T-tests
+```{r stats}
+
+
+## T-tests for each ENV and RPS13 abundances
+
+# RPS13 abun t-test
+moribund = rps_abun[,1]
+length(moribund)
+moribund
+harvest = rps_abun[1:10,2]
+length(harvest)
+harvest
+t.test(moribund, harvest,
+       alternative = c("two.sided", "less", "greater"),
+       mu = 0, paired = FALSE, var.equal = FALSE,
+       conf.level = 0.95)
+
+# ENV abun t-test
+moribund = tenv[,1]
+length(moribund)
+moribund
+harvest = tenv[1:10,2]
+length(harvest)
+harvest
+t.test(moribund, harvest,
+       alternative = c("two.sided", "less", "greater"),
+       mu = 0, paired = FALSE, var.equal = FALSE,
+       conf.level = 0.95)
+
+```
