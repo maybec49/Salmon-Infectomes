@@ -1,0 +1,519 @@
+---
+title: "Bacterial Analysis"
+author: "Rebecca M. Grimwood"
+date: "17/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library imports
+```{r libraries, message=FALSE, warning=FALSE}
+
+library(ggplot2)
+library(ggord)
+library(ggVennDiagram)
+
+library(dplyr)
+library(tidyverse)
+library(tibble)
+library(reshape2)
+
+
+library(RColorBrewer)
+library(viridis)
+
+library(vegan)
+
+library(zoo)
+
+pen_names = c("V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V12", "V13", "V14", "V15", "K191B1", "K191C", "K191A", "K191C1", "K191C5", "R193B1", "R193B2", "WAI1", "WAI2", "WAI3", "WAI4", "WAI5", "WAI6", "WAI7", "WAI8", "WAI9", "WAI10")
+
+library_depths = c(65929698,	77297928,	80923082,	69988356,	69527930,	65946192,	62269530,	72784142,	43467686,	67851106,	53688854,	75524328,	69689740,	82786784,	68233088,	81524268,	64747444,	44819822,	74191622,	68443522,	84861854,	71362638,	91078110,	71165770,	70649924,	71654942,	84307360,	70321790,	70092936,	79758784,	86259108)
+
+```
+
+## Relative abundances - phyla and genus
+```{r relative abun}
+
+## Relative abundance (phyla)
+
+# Read in std phylum table
+phylum = read.table('Data/phyla_db3_normalisedv2_2021.csv', sep=',', header=TRUE)
+colnames(phylum) = c("Bactria", pen_names)
+
+# Normalise samples
+phylum_norm = sweep(phylum[,-1],2,colSums(phylum[,-1]),"/")
+rownames(phylum_norm) = phylum[,1]
+
+# Melt
+melted_phylum = melt(as.matrix(phylum_norm))
+
+# Add column names
+colnames(melted_phylum) = c("Bacteria", "Sample", "Relative Abundance (%)")
+
+# Relative abundance: stacked + percent
+ggplot(melted_phylum, aes(fill=Bacteria, y=`Relative Abundance (%)`, x=Sample)) + 
+  geom_bar(position="fill", stat="identity") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+# Select dominant phyla
+dominant_phyla = phylum_norm[c(2,5,10,11,13),]
+
+# Melt
+melted_dom = melt(as.matrix(dominant_phyla))
+
+# Add column names
+colnames(melted_dom) = c("Bacteria", "Sample", "Relative Abundance (%)")
+
+# Relative abundance: stacked + percent
+ggplot(melted_dom, aes(fill=Bacteria, y=`Relative Abundance (%)`, x=Sample)) + 
+  geom_bar(position="fill", stat="identity") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+
+# 16s phyla
+rdp_phyla = read.csv("Data/16s_phyla_2021.csv", sep=',', header=TRUE)
+rdp_phyla2 = rdp_phyla[,5:35]
+rownames(rdp_phyla2) = rdp_phyla[,2]
+melt_rdp = melt(as.matrix(rdp_phyla2))
+colnames(melt_rdp) = c("Bacteria", "Sample", "Relative Abundance (%)")
+
+ggplot(melt_rdp, aes(fill=Bacteria, y=`Relative Abundance (%)`, x=Sample)) + 
+  geom_bar(position="fill", stat="identity") +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+# Bacteriodetes abundance t-test
+bacteriodetes = read.table('Data/16S_bacteriodetes.csv', sep=',', header=TRUE)
+
+var.test(bacteriodetes[,1], bacteriodetes[,2], alternative = "two.sided")
+t.test(bacteriodetes[,1], bacteriodetes[,2],
+       alternative = c("two.sided", "less", "greater"),
+       mu = 0, paired = FALSE, var.equal = FALSE,
+       conf.level = 0.95)
+
+
+```
+
+
+
+## Genus Level Analysis
+```{r genus}
+
+# Read in standardised pathogenic genus and species level
+abundances = read.table('Data/genus_level_metadata_2021.csv', sep=',', header=TRUE)
+
+# Read in metadata
+metadata = read.table('Data/meta_data_2021.csv', sep=',', header=TRUE)
+
+# Extract genus
+genus_abun = abundances[abundances$Level == 'G',] 
+
+genus_abun2 = genus_abun[,5:35]
+rownames(genus_abun2) = genus_abun[,1]
+
+
+# Full genus info
+full.genus = read.table('Data/full_genus_2021.csv', sep=',', header=TRUE)
+dim(full.genus)
+
+# Remove extra cols
+full.genus2 = full.genus[,4:34]
+rownames(full.genus2) = full.genus[,1]
+colnames(full.genus2) = pen_names
+
+# Filter for at least 3 samples with at least 5 counts for that genus each (based on pa)
+nrow(full.genus2)
+keep = rowSums(full.genus2 >= 5) >= 3
+full.genus2 = full.genus2[keep,]
+nrow(full.genus2)
+
+# Standardise remaining by libraray depth
+full.genus2 = sweep(full.genus2,2,library_depths,"/")
+
+```
+
+## NMDS and adonis
+```{r nmds}
+
+## NMDS on pathogenic genus
+
+# Transpose abundance table
+tgenus = sweep(genus_abun2,2,colSums(genus_abun2),"/")
+colSums(tgenus)
+tgenus = t(genus_abun2)
+
+# Abundance info and metadata
+fulldata = cbind(metadata[,2:3], tgenus)
+
+# Compute bray-curtis distance
+vdist= vegdist(tgenus, "bray") # do we need to put this into the mds below, instead of tgenus?
+
+# Preform NMDS
+mds = metaMDS(tgenus, distance = "bray", k = 2)
+stressplot(mds)
+plot(mds, type='t', display=c('site', 'species'))
+
+# Extract metadata
+metadata2 = metadata[,2:4]
+rownames(metadata2) = rownames(tgenus)
+metadata2 = metadata2[rownames(tgenus),] # Extract only metadata rows matching those in tgenus
+
+metadata3 = metadata2 %>% mutate(Treatment = as.factor(Treatment), Extraction.date = as.factor(Extraction.date), Farm = as.factor(Farm))
+
+## Adonis
+# Order of factors in formula are important/affect significant (as they will absorb residual)
+adonis(formula = vdist~Extraction.date + Treatment + Farm, data = metadata3, method = "bray")
+
+# Plot by date/treatment
+mds_points = as.data.frame(mds$points)
+mds_points2 = cbind(rownames(tgenus), mds_points)
+metadata3 = cbind(rownames(tgenus), metadata3)
+metadata3 = left_join(metadata3, mds_points2,"rownames(tgenus)")
+metadata3 %>% ggplot(aes(x=MDS1, y=MDS2, color=Treatment)) + geom_point()
+
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+
+# Full genus level
+
+# Transpose abundance table
+tfull.genus = sweep(full.genus2,2,colSums(full.genus2),"/")
+tfull.genus = t(full.genus2)
+
+# Compute bray-curtis distance
+vdist= vegdist(tfull.genus, "bray") # do we need to put this into the mds below, instead of tgenus?
+
+# Preform NMDS
+mds = metaMDS(tfull.genus, distance = "bray", k = 2)
+stressplot(mds)
+plot(mds, type='t', display=c('site'))
+
+# Adonis
+adonis(formula = vdist~Extraction.date + Treatment + Farm, data = metadata3, method = "bray")
+
+# Plot by date/treatment
+mds_points = as.data.frame(mds$points)
+mds_points2 = cbind(rownames(tfull.genus), mds_points)
+metadata4 = cbind(rownames(tfull.genus), metadata2)
+metadata4 = left_join(metadata4, mds_points2,"rownames(tfull.genus)")
+metadata4 %>% ggplot(aes(x=MDS1, y=MDS2, color=Treatment)) + geom_point()
+
+```
+
+## CCA plot and anova
+```{r cca}
+
+
+# CCA on full genus info.
+ord = cca(tfull.genus~Extraction.date + Treatment + Farm, data=metadata4, method='bray')
+
+screeplot(ord)
+plot(ord)
+#summary(ord)
+
+ggord(ord, metadata4$Farm, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+ggord(ord, metadata4$Treatment, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+ggord(ord, metadata4$Extraction.date, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+
+# Anova of terms
+anova(ord, by="term")
+
+
+# CCA on restricted (pathogenic) genus
+ord = cca(tgenus~Extraction.date + Treatment + Farm, data=metadata4, method='bray')
+
+screeplot(ord)
+plot(ord)
+#summary(ord)
+
+ggord(ord, metadata4$Farm, txt=NULL, xlims=c(-15, 15), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+ggord(ord, metadata4$Treatment, txt=NULL, xlims=c(-30, 30), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+ggord(ord, metadata4$Extraction.date, txt=NULL, xlims=c(-30, 30), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+
+# Anova of terms
+anova(ord, by="term")
+
+```
+
+## Heat map (genus - Bray Curtis distance)
+``` {r heatmap}
+
+# Heat map
+
+# Normalise/scale by genus
+tgenus = t(genus_abun2)
+tgenus_norm = sweep(tgenus,2,colSums(tgenus),"/")
+colSums(tgenus_norm)
+
+# Make colour object
+colour = colorRampPalette(brewer.pal(8, "RdBu"))(50)
+
+# Cluster columns
+data.dist.g = vegdist(t(tgenus_norm), method = "bray")
+col.clus = hclust(data.dist.g, "aver")
+
+# Cluster rows
+data.dist = vegdist(tgenus_norm, method = "bray")
+row.clus = hclust(data.dist, "aver")
+
+# Plot
+heatmap(as.matrix(tgenus_norm), col=rev(colour), Rowv = as.dendrogram(row.clus), Colv = as.dendrogram(col.clus),  margins = c(10, 3))
+
+```
+
+## Presence absence of significant (known) pathogenic genus
+```{r presence/absence}
+
+# Read in presence/absence data
+pa = read.table('Data/presence_absence_2021.csv', sep=',', header=TRUE)
+pa = pa[pa$Level == 'G',]
+
+OneOrMorePresent = pa[,5:35]>0
+colnames(OneOrMorePresent) = pen_names
+
+richness = apply(OneOrMorePresent,2,sum)
+
+#View(as.matrix(richness))
+which.min(richness)
+which.max(richness) 
+
+# Convert T/F to 1/0
+pa2 = OneOrMorePresent*1
+pa2 = cbind(pa[,1:4], pa2)
+
+## Heatmap of PA
+hm = cbind(pa[,1], pa2[,5:35])
+hm = melt(hm)
+
+# Order x-axis
+hm$`pa[, 1]` = factor(hm$`pa[, 1]`, levels=unique(hm$`pa[, 1]`))
+ggplot(data = hm) + aes(x=hm[,2], y=hm[,1], fill=factor(value)) + 
+  geom_bin_2d(
+    stat = "bin2d",
+    show.legend = T,
+  ) + 
+  scale_fill_manual(values=c("0"="light grey", "1"= "dark blue"))+
+ theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+
+
+# Cluster PA map
+thm = pa2[,5:35]
+rownames(thm) = pa[,1]
+thm = t(thm)
+
+# Cluster columns (species)
+dist.pa.col = vegdist(t(thm), method = "bray")
+pa.col.clus = hclust(dist.pa.col, "aver")
+
+# Cluster rows
+dist.pa.rows = vegdist(thm, method = "bray")
+pa.row.clus = hclust(dist.pa.rows, "aver")
+
+# Plot
+heatmap(as.matrix(thm), Rowv = as.dendrogram(pa.row.clus), Colv = as.dendrogram(pa.col.clus), margins = c(10, 3), col=c("light grey", "light blue"))
+
+
+```
+
+
+## Species richness
+```{r species}
+
+# Pathogenic species
+species = read.table('Data/presence_absence_2021.csv', sep=',', header=TRUE)
+species = species[species$Level == 'S',]
+
+# Map of presence/absence
+OneOrMorePresent = species[,5:35]>0
+
+richness = apply(OneOrMorePresent,2,sum)
+
+#View(as.matrix(richness))
+which.min(richness)
+which.max(richness) 
+
+# Convert T/F to 1/0
+species_pa = OneOrMorePresent*1
+species_pa = cbind(species[,1:4], species_pa)
+
+## Heatmap of PA
+hm = cbind(species_pa[,1], species_pa[,5:35])
+hm = melt(hm)
+
+# Order x-axis
+hm$`species_pa[, 1]` = factor(hm$`species_pa[, 1]`, levels=unique(hm$`species_pa[, 1]`))
+ggplot(data = hm) + aes(x=hm[,2], y=hm[,1], fill=factor(value)) + 
+  geom_bin_2d(
+    stat = "bin2d",
+    show.legend = T,
+  ) + 
+  scale_fill_manual(values=c("0"="light grey", "1"= "dark blue"))+
+ theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+
+# Clustered species PA
+thm = species_pa[,5:35]
+rownames(thm) = species_pa[,1]
+colnames(thm) = pen_names
+thm = t(thm)
+
+# Cluster columns (species)
+dist.pa.col = vegdist(t(thm), method = "bray")
+pa.col.clus = hclust(dist.pa.col, "aver")
+
+# Cluster rows
+dist.pa.rows = vegdist(thm, method = "bray")
+pa.row.clus = hclust(dist.pa.rows, "aver")
+
+# Plot
+heatmap(as.matrix(thm), Rowv = as.dendrogram(pa.row.clus), Colv = as.dendrogram(pa.col.clus), margins = c(10, 3), col=c("light grey", "light blue"))
+
+
+
+
+# Total species (PA) - species richness and diversity
+
+# Read in total species
+full.species = read.table('Data/full_species_2021.csv', sep=',', header=TRUE)
+full.species2 = full.species[,4:34]
+colnames(full.species2) = pen_names
+rownames(full.species2) = full.species[,1]
+
+# Filter for at least 3 samples with at least 5 counts for that species each
+nrow(full.species2)
+keep = rowSums(full.species2 >= 5) >= 3
+full.species2 = full.species2[keep,]
+nrow(full.species2)
+
+# Standardise remaining by libraray depth
+full.species2 = sweep(full.species2,2,library_depths,"/")
+
+# Normalise by total sample reads
+full.species2 = sweep(full.species2,2,colSums(full.species2),"/")
+colSums(full.species2)
+
+# Species richness
+species_richness = apply(t(full.species2)>0,1,sum)
+species_richness
+
+# Box plot: species richness
+
+species_richness_matrix = as.matrix(species_richness)
+species_richness_matrix2 = cbind(species_richness_matrix, rep(c("Moribund", "Harvest"), c(21,10)))
+
+# Extract moribund and harvest for T-test
+moribund = species_richness_matrix2[1:21,1:2]
+harvest = species_richness_matrix2[22:31,1:2]
+
+# Combine moribund and harvest as two separate rows/cols
+richness_matrix = t(as.matrix(merge(zoo(moribund[,1]), zoo(harvest[,1]))))
+class(richness_matrix) = "numeric" # make sure everything is numeric
+rownames(richness_matrix) = c("Moribund", "Harvest")
+
+# Transpose and melt
+trichness = t(richness_matrix)
+melt_richness = melt(trichness)
+colnames(melt_richness) = c("1", "Group", "Species Richness")
+
+# Plot species richness
+ggplot(melt_richness, aes(x=Group, y=`Species Richness`, fill=Group)) + 
+  geom_boxplot() + geom_jitter(color="black", size=1, alpha=0.5) + ggtitle("Species Richness per Group")
+
+# T-test: species richness
+
+# Species richness
+t.test(as.numeric(moribund[,1]), as.numeric(harvest[,1]),
+       alternative = c("two.sided", "less", "greater"),
+       mu = 0, paired = FALSE, var.equal = FALSE,
+       conf.level = 0.95)
+
+
+
+
+
+
+# Shannon index
+shannon = apply(full.species2,2,diversity,index="shannon") 
+shannon
+
+# Box plot: Shannon diversity
+
+shannon_matrix = as.matrix(shannon)
+shannon_matrix = cbind(shannon_matrix, rep(c("Moribund", "Harvest"), c(21,10)))
+
+# Extract moribund and harvest for T-test
+moribund = shannon_matrix[1:21,1:2]
+harvest = shannon_matrix[22:31,1:2]
+
+# Combine moribund and harvest as two separate rows/cols
+shannon_matrix = t(as.matrix(merge(zoo(moribund[,1]), zoo(harvest[,1]))))
+class(shannon_matrix) = "numeric" # make sure everything is numeric
+rownames(shannon_matrix) = c("Moribund", "Harvest")
+
+# Transpose and melt
+tshannon = t(shannon_matrix)
+melt_shannon = melt(tshannon)
+colnames(melt_shannon) = c("1", "Group", "Shannon Index")
+
+# Plot species richness
+ggplot(melt_shannon, aes(x=Group, y=`Shannon Index`, fill=Group)) + 
+  geom_boxplot() + geom_jitter(color="black", size=1, alpha=0.5) + ggtitle("Shannon Index per Group")
+
+# T-test: shannon diversity
+t.test(as.numeric(moribund[,1]), as.numeric(harvest[,1]),
+       alternative = c("two.sided", "less", "greater"),
+       mu = 0, paired = FALSE, var.equal = FALSE,
+       conf.level = 0.95)
+
+
+
+
+# Venn diagram of # overlapping species
+
+# Moribund
+moribund_species= as.matrix(rowSums(full.species2[,1:21]))
+dim(moribund_species)
+
+# Extract species with >0 counts
+moribund_species2 = as.matrix(rownames(moribund_species)[moribund_species>0])
+dim(moribund_species2)
+
+# Harvest
+harvest_species = as.matrix(rowSums(full.species2[,22:31]))
+dim(harvest_species)
+
+# Extract species with >0 counts
+harvest_species2 = as.matrix(rownames(harvest_species)[harvest_species>0])
+dim(harvest_species2)
+
+x = list(Moribund=moribund_species2[,1], Harvest=harvest_species2[,1])
+ggVennDiagram(x, category.names = c("Moribund", "Harvest")) +
+  ggplot2::scale_fill_gradient(low="pale green",high = "dark green")
+
+# Extract bacteria only found in moribund samples
+unique = as.matrix(moribund_species2[!(moribund_species2 %in% harvest_species2)])
+unique = cbind(unique, moribund_species[unique[,1],])
+unique = unique[order(unique[,2]),]
+unique = as.matrix(unique[,-1])
+write.csv(unique, "species_unique_moribund.csv")
+
+
+
+
+# CCA on full species (normalised earlier)
+ord = cca(t(full.species2)~Extraction.date + Treatment + Farm, data=metadata4, method='bray')
+plot(ord)
+
+ggord(ord, metadata4$Farm, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+ggord(ord, metadata4$Treatment, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+ggord(ord, metadata4$Extraction.date, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
+
+# Anova of terms
+anova(ord, by="term")
+
+```

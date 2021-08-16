@@ -1,0 +1,364 @@
+---
+title: "Host Immune Response"
+author: "Rebecca M. Grimwood"
+date: "17/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library Imports
+```{r libraries, message=FALSE, warning=FALSE}
+
+library(DESeq2)
+library(limma)
+library(edgeR)
+
+library(ggplot2)
+library(ggVennDiagram)
+
+library(pheatmap)
+
+library(reshape2)
+library(tidyverse)
+
+library(RColorBrewer)
+
+```
+
+## Formatting count table
+```{r formatting}
+
+## Required files: 
+## featureCounts_2021.txt
+## meta_data_2021.csv
+## VDD_chinook_genes.csv
+
+# Read in paired-end feature counts
+sample_counts = read.table('Data/featureCounts_2021.txt', sep='\t', header=TRUE)
+dim(sample_counts)
+
+# Pen names
+pen_names = c("V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V12", "V13", "V14", "V15", "K191B1", "K191C", "K191A", "K191C1", "K191C5", "R193B1", "R193B2", "WAI1", "WAI2", "WAI3", "WAI4", "WAI5", "WAI6", "WAI7", "WAI18", "WAI9", "WAI10")
+
+# Reorder columns 1-31 and rename
+col_order = c("S1Aligned.out.sam", "S2Aligned.out.sam", "S3Aligned.out.sam", "S4Aligned.out.sam", 
+              "S5Aligned.out.sam", "S6Aligned.out.sam", "S7Aligned.out.sam", "S8Aligned.out.sam",
+              "S9Aligned.out.sam", "S10Aligned.out.sam", "S11Aligned.out.sam", "S12Aligned.out.sam", 
+              "S13Aligned.out.sam","S14Aligned.out.sam", "S15Aligned.out.sam", "S16Aligned.out.sam", 
+              "S17Aligned.out.sam", "S18Aligned.out.sam", "S19Aligned.out.sam", "S20Aligned.out.sam", 
+              "S21Aligned.out.sam", "S22Aligned.out.sam", "S23Aligned.out.sam", "S24Aligned.out.sam",
+              "S25Aligned.out.sam", "S26Aligned.out.sam", "S27Aligned.out.sam", "S28Aligned.out.sam", 
+              "S29Aligned.out.sam","S30Aligned.out.sam", "S31Aligned.out.sam")
+
+# Extract only count data
+counts = sample_counts[,7:37]
+rownames(counts) = sample_counts$Geneid
+
+# Re-order samples and rename samples
+counts = counts[, col_order]
+colnames(counts) = pen_names
+
+# Relevant meta data
+full.meta = read.csv("Data/meta_data_2021.csv", sep = ",", header = T, row.names = 1)
+
+# Gene/exon annotations (full)
+annot = read.csv('Data/full_exon_annotations_2021.csv', sep=',', header=F)
+annot[1,1] = "LOC112255685"
+rownames(annot) = annot[,1]
+colnames(annot) = c("Gene ID", "Annotation")
+
+
+# List of immune genes from other papers (1,388 unique)
+immune_genes = read.csv('Data/VDD_chinook_genes.csv', sep=',', header=T)
+# Remove duplicates
+immune_genes = immune_genes[!duplicated(immune_genes[,1]),]
+dim(immune_genes) # 1,388
+# Set row names
+rownames(immune_genes) = immune_genes[,1]
+
+# Conditions (full)
+cond = rep(c("Moribund", "Harvest"), c(21, 10))
+
+```
+
+## Quality Contol
+```{r quality control}
+
+## Unnormalised and re-ordered counts = counts2
+barplot(colSums(counts), las=3, ylab="Reads mapped per sample")
+
+
+
+## Density plots
+
+logcounts = log(counts[,1],10) # Low qualiy samples: 9, 11, 12, and 18 
+
+d = density(logcounts)
+
+plot(d,xlim=c(1,8),main="",ylim=c(0,.45),xlab="Raw read counts per gene (log10)", ylab="Density")
+for (s in 2:length(counts)){
+  logcounts = log(counts[,s],10) 
+  d = density(logcounts)
+  lines(d)
+}
+
+
+## Heat map
+
+# Select 100 most highly expressed genes
+select = order(rowMeans(counts), decreasing=TRUE)[1:100]
+highexprgenes = counts[select,]
+
+heatmap(as.matrix(highexprgenes), col=topo.colors(50), margin=c(10,6))
+
+
+
+## MDS
+
+# Select data for the 1000 most highly expressed genes
+select = order(rowMeans(counts), decreasing=TRUE)[1:100]
+highexprgenes_pca = counts[select,]
+
+# Annotate the data with condition group as labels
+colnames(highexprgenes_pca) = cond
+
+# Transpose the data to have variables (genes) as columns
+data_for_PCA = t(highexprgenes_pca)
+dim(data_for_PCA)
+
+# Perform mds
+mds = cmdscale(dist(data_for_PCA), k=2, eig=TRUE) 
+mds$eig
+
+# Transform the Eigen values into percentage
+eig_pc = mds$eig * 100 / sum(mds$eig)
+
+# Plot the eigen values
+barplot(eig_pc,
+        las=1,
+        xlab="Dimensions", 
+        ylab="Proportion of explained variance (%)", y.axis=NULL,
+        col="darkgrey")
+
+# First 12 dimensions
+mds = cmdscale(dist(data_for_PCA), k = 12)
+
+# Plot first two mds/dimensions: by moribund/harvest and by sample name
+plot(mds[,1], mds[,2], type="n", xlab="Dimension 1", ylab="Dimension 2", main="")
+text(mds[,1], mds[,2], rownames(mds), cex=0.8) 
+
+plot(mds[,1], mds[,2], type="n", xlab="Dimension 1", ylab="Dimension 2", main="")
+text(mds[,1], mds[,2], colnames(counts), cex=0.8) 
+
+```
+
+## DESeq on QC counts - removing 4 low quality samples
+```{r deseq v2}
+
+# Remove the four low quality samples
+high_q_counts = counts[,-c(9, 11:12, 18)]
+dim(high_q_counts)
+
+# Select relevant meta data
+hq.data = full.meta[-c(9, 11:12, 18),]
+
+# Create dds object
+dds = DESeqDataSetFromMatrix(countData = as.matrix(high_q_counts), 
+                             colData = hq.data,
+                             design = ~Treatment)
+
+# Remove low count rows
+nrow(dds)
+keep = rowSums(counts(dds)) > 1
+dds = dds[keep,]
+nrow(dds) # remaining:: 40,443 (8,287 removed)
+
+# VST normalisation
+vsd = vst(dds, blind = FALSE)
+head(assay(vsd), 3)
+
+# Distance heap map
+sampleDists = dist(t(assay(vsd)))
+
+sampleDistMatrix = as.matrix( sampleDists )
+rownames(sampleDistMatrix) = paste( vsd$Treatment, vsd$Extraction.date, sep = " - " )
+colnames(sampleDistMatrix) = NULL
+colors = colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+
+# PCA coloured by treatment and extraction data
+plotPCA(vsd, intgroup = c("Treatment", "Extraction.date"))
+pcaData = plotPCA(vsd, intgroup = c("Treatment", "Extraction.date"), returnData = TRUE)
+
+# pcaData
+percentVar = round(100 * attr(pcaData, "percentVar"))
+
+ggplot(pcaData, aes(x = PC1, y = PC2, color = Treatment, shape = Extraction.date)) +
+  geom_point(size =3) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  coord_fixed() +
+  ggtitle("PCA with VST data")
+
+
+# MDS
+mds = as.data.frame(colData(vsd))  %>%
+         cbind(cmdscale(sampleDistMatrix))
+
+ggplot(mds, aes(x = `1`, y = `2`, color = Treatment, shape = Extraction.date)) +
+  geom_point(size = 3) + coord_fixed() + ggtitle("MDS with VST data")
+
+
+# ----------------------------------------------------------------------------------------------------------
+
+# Run the DE analysis
+dds = DESeq(dds)
+
+# Extract results
+res = DESeq2::results(dds)
+
+## Remove rows with NAs
+res = na.omit(res)
+
+# Table of analysis
+knitr::kable(res[1:100,])
+sum(res$padj <= 0.05) # 2,473 genes sigificantly DE
+
+# Summary of DE
+summary(res, 0.05)
+mcols(res, use.names = T)
+
+# Order genes by padj
+sorted.res = as.data.frame(res)
+sorted.res = sorted.res[order(sorted.res$padj),]
+sorted.res[1:100,] # Top gene = LOC112218881 (ladderlectin)
+
+# Significant genes alpha <= 0.05 BH
+significant_genes = sorted.res[sorted.res$padj <= 0.05 , ]
+
+# Annotate significant DE genes/exons
+sig_genes_annot = cbind(significant_genes, annot[rownames(significant_genes),])
+dim(significant_genes)
+head(significant_genes)
+
+# Export significantly DE genes
+# write.csv(sig_genes_annot, "DE_salmon_genes_2021.csv")
+
+# Plot top 20 DE genes
+par(mfrow=c(4,5))
+par(mar=c(2,2,2,2))
+for(n in 1:20){
+ plotCounts(dds, gene = rownames(sorted.res[n,]), intgroup=c("Treatment"))
+}
+
+# Find overlap of known immune-associated genes with sig. DE exons/genes
+known_immune_genes = immune_genes[rownames(significant_genes),]
+list_of_known_immune_genes = known_immune_genes[!(known_immune_genes[,1]=="NA"),]
+list_of_known_immune_genes = na.omit(list_of_known_immune_genes)
+dim(list_of_known_immune_genes) # 113 
+
+
+# Subset data for immune genes to test specific genes in the immune_gene list
+res.sub = as.data.frame(res)
+res.sub = res.sub[rownames(immune_genes),]  # index the genes you are interested in
+res.sub$padj = p.adjust(res.sub$pvalue, method="BH") # readjust p-value
+res.sub = res.sub[order(res.sub$padj),]
+head(res.sub)
+
+# How many immune genes significant now... 125
+res.sub = na.omit(res.sub)
+sum(res.sub$padj <= 0.05) # 125 genes sigificantly DE from this list in moribund fish
+sig_immune_genes = res.sub[res.sub$padj <= 0.05 , ]
+sig_immune_annot = cbind(sig_immune_genes, annot[rownames(sig_immune_genes),])
+
+# Write DE immune genes to csv
+# write.csv(sig_immune_annot, "de_immune_genes_2021.csv")
+
+```
+
+## Visualising results
+```{r results}
+
+# Visualisations
+
+# rlog transform counts
+dds_rlog = rlog(dds, blind = FALSE)
+
+
+
+# Plot PCA of rlog genes 
+plotPCA(dds_rlog, intgroup = "Treatment", ntop = 500) +
+  geom_point(size = 5) +
+  scale_y_continuous(limits = c(-40, 40)) + 
+  ggtitle(label = "Principal Component Analysis (PCA)", 
+          subtitle = "Top 500 most variable genes") 
+# + geom_label(aes(label = rownames(colData(dds_rlog))))
+
+# Plot PCA of rlog immune genes
+immune_rlog = dds_rlog[row.names(sig_immune_annot)][1:125, ]
+plotPCA(immune_rlog, intgroup = "Treatment", ntop = 125) +
+  geom_point(size = 2) +
+  scale_y_continuous(limits = c(-15, 15)) + 
+  ggtitle(label = "Principal Component Analysis (PCA)", 
+          subtitle = "125 Immune Genes") 
+
+
+
+
+# Heat map of rlog top (40) genes
+mat = assay(dds_rlog[row.names(sig_immune_annot)])[1:125, ] # all 125 sig. DE immune-assoc. genes*
+
+# Annotate columns by treatment/group
+annotation_col = data.frame(Group = factor(colData(dds_rlog)$Treatment))
+
+# Specify colors you want to annotate the columns by.
+ann_colors = list(Group = c(Moribund = "dark blue", Harvest = "light blue"))
+
+# Heat map 
+pheatmap(mat = mat, 
+         color = rev(colorRampPalette(brewer.pal(9, "RdBu"))(255)), 
+         scale = "row", # Scale genes to Z-score
+         annotation_col = annotation_col, 
+         annotation_colors = ann_colors,
+         fontsize = 6, 
+         cellwidth = 10, 
+         show_colnames = T)
+
+
+
+# Volcano plot 
+data = data.frame(gene = row.names(res),
+                   pval = -log10(res$padj), 
+                   lfc = res$log2FoldChange)
+
+# Remove any rows that have NA as an entry
+data = na.omit(data)
+
+# Color the points which are up or down
+data = mutate(data, color = case_when(data$lfc > log2(2) & data$pval > -log10(0.05) ~ "Increased",
+                                       data$lfc < log2(1/2) & data$pval > -log10(0.05) ~ "Decreased",
+                                       data$pval < -log10(0.05) ~ "nonsignificant"))
+
+# plot
+vol = ggplot(data, aes(x = lfc, y = pval, color = color))
+
+vol +   
+  ggtitle(label = "Volcano Plot", subtitle = "Colored by fold-change direction") +
+  geom_point(size = 2.5, alpha = 0.8, na.rm = T) +
+  scale_color_manual(name = "Directionality",
+                     values = c(Increased = "#008B00", Decreased = "#CD4F39", nonsignificant = "darkgray")) +
+  theme_bw(base_size = 10) + 
+  theme(legend.position = "right") + 
+  xlab(expression(log[2]("Moribund" / "Harvest"))) + 
+  ylab(expression(-log[10]("adjusted p-value"))) +
+  geom_hline(yintercept = -log10(0.05), colour = "darkgrey") + # Add p-adj value cutoff line (0.05)
+  scale_y_continuous(trans = "log1p") 
+
+```

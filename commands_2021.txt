@@ -1,0 +1,118 @@
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+# Salmon Infectomes (BSc(Hons) Genetics Dissertation 2021)
+
+# Additional material: Unix commands
+
+# R. M. Grimwood 16/08/2021 (grire@student.otago.ac.nz)
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+# Contents:
+
+# 1. Genome indexing, alignment, and host-read filtering using STAR and Samtools
+
+# 2. Filtering and classification of bacterial 16s rRNA using SortMeRNA and rdp_classifier
+
+# 3. Classifying microbes with Kraken2 and Bracken
+
+# 4. Antimicrobial resistance gene analysis with KMA and the resfinder_db
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+# 1. -------------- Index and build reference genome (OtshV1 GCA_002872995.1): STAR version==2.7.9a 
+
+# Generate genome indices
+STAR --runMode genomeGenerate --genomeDir PATH/TO/GENOME --genomeFastaFiles GENOME/Otshv1.fasta --sjdbGTFfile GENOME/Otshv1.gtf --outFileNamePrefix GENOME
+
+
+#-------------- Alignment to genome and filtering host reads: STAR version==2.7.9a and Samtools version==1.10-104-g869941a
+
+# Align reads to reference genome (OtshV1) and keep unmapped reads
+STAR --runThreadN 8 --genomeDir PATH/TO/GENOME --readFilesIn PATH/TO/FASTQ/S#_R1.fastq.gz PATH/TO/FASTQ/S#_R2.fastq.gz --readFilesCommand gunzip -c --outReadsUnmapped Fastx --outSAMunmapped Within KeepPairs --outSAMtype BAM SortedByCoordinate --outFileNamePrefix S#  
+
+# Sorting: filter for both R1 and R2 unmapped reads
+samtools view -b -f 12 -F 256 "${f}"Aligned.sortedByCoord.out.bam > "${f}"_bothRM.bam
+
+# Sort by read name
+samtools sort -n -m 5G -@ 2 "${f}"_bothRM.bam -o "${f}"_bothRM_sorted.bam
+
+# Extract R1 and R2 -> fastqs with aligned reads filtered out
+samtools fastq -@ 8 "${f}"_bothRM_sorted.bam -1 "${f}"_star_R1.fastq.gz -2 "${f}"_star_R2.fastq.gz -0 /dev/null -s /dev/null -n
+
+
+#-------------- Count features (exons): featureCounts version==2.0.1
+
+# Feature counting 
+featureCounts -p -a PATH/TO/GENOME/Otshv1_.gtf  -o salmon_counts.txt *.sam
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+# 2. -------------- Filtering bacterial rRNA: SortMeRNA version==4.3.3 
+
+# Empty run/kvdb folder
+rm * PATH/TO/sortmerna/run/kvdb
+
+# Run sortmerna (all file/db must be in working directory)
+# With star-filtered: .yes and .no fastqs - yes have rRNA (both paired ends, need unmerging) and no has not rRNA reads (both paired ends)
+sortmerna --ref silva-bac-16s-id90.fasta --reads PATH/TO/FILTERED/READS/S#_star_R1.fastq.gz --reads PATH/TO/FILTERED/READS/S#_star_R2.fastq.gz  --fastx --aligned S#_star_yes --other S#_star_no --paired_in
+
+#-------------- Bacterial rRNA classification: rdp_classifier version=2.2
+
+# Convert sortmeRNA-sorted 'yes' .fq to .fa
+gunzip -c PATH/TO/RRNA/CLASSIFIED/READS/S#_star_yes.fq.gz | awk '{if(NR%4==1) {printf(">%s\n",substr($0,2));} else if(NR%4==2) print;}' > S#_star.fa
+
+# Classify bacterial rRNA
+classifier -c 0.8 -o S#_16S.txt -h S#_16S_hier.txt PATH/TO/RRNA/CLASSIFIED/FASTA/S#_star.fa 
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+# 3.-------------- Classifying microbes: Kraken2 version==2.1.2 
+
+
+# Make (custom) database directory
+mkdir database
+
+# 1. Download: archaea, protozoa, plasmid, fungi, human, bacteria dbs (nt)
+kraken2-build --download-library archaea --db database --threads 24 
+kraken2-build --download-library protozoa --db database --threads 24
+kraken2-build --download-library plasmid --db database --threads 24
+kraken2-build --download-library fungi --db database --threads 24
+kraken2-build --download-library human --db database --threads 24
+kraken2-build --download-library bacteria --db database --threads 24
+
+# 2. Download the taxonomy
+kraken2-build --download-taxonomy --db database --threads 24
+
+# 3. Build the database
+kraken2-build --build --db database --threads 24
+
+# 4. Run kraken2 on filtered reads
+kraken2 --use-names --db database --paired --classified-out S#cseqs#.fq PATH/TO/FILTERED/READS/S#_star_R1.fastq PATH/TO/FILTERED/READS/S#_star_R2.fastq --gzip-compressed --report S#.report --report-zero-counts > S#_profile.out
+
+
+#-------------- More accurate species/genus-level estimations: Bracken version==2.6.1
+
+# Build bracken index file: kmer = 35 (kraken2); read length = 101
+bracken-build -d PATH/TO/KRAKEN2/database -t 24 -k 35 -l 101
+
+
+# Run - genus and species levels
+bracken -d PATH/TO/KRAKEN2/database -i S#.report -o S#.bracken -r 101 -l S -t 5
+bracken -d PATH/TO/KRAKEN2/database -i S#.report -o S#.bracken -r 101 -l G -t 5
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+
+# 4. -------------- AMR gene analysis: KMA version==1.3.23
+
+# Index resfinder databases
+kma_index -i <antibiotic>.fsa -o kma_indexing/"${DATABASE}"
+
+# Use KMA to map paired-end reads to AMR genes
+kma -ipe PATH/TO/FILTERED/READS/S#_star_R1.fastq PATH/TO/FILTERED/READS/S#_star_R2.fastq -o samples/"${f}"_"${DATABASE}" -t_db kma_indexing/"${DATABASE}"
+
+= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
