@@ -1,7 +1,7 @@
 ---
 title: "Bacterial Analysis"
 author: "Rebecca M. Grimwood"
-date: "17/08/2021"
+date: "30/08/2021"
 output: html_document
 ---
 
@@ -163,9 +163,8 @@ metadata2 = metadata2[rownames(tgenus),] # Extract only metadata rows matching t
 
 metadata3 = metadata2 %>% mutate(Treatment = as.factor(Treatment), Extraction.date = as.factor(Extraction.date), Farm = as.factor(Farm))
 
-## Adonis
-# Order of factors in formula are important/affect significant (as they will absorb residual)
-adonis(formula = vdist~Extraction.date + Treatment + Farm, data = metadata3, method = "bray")
+## Adonis for pathogenic genus
+adonis2(formula = vdist~Extraction.date + Treatment, data = metadata3, method = "bray")
 
 # Plot by date/treatment
 mds_points = as.data.frame(mds$points)
@@ -193,7 +192,7 @@ stressplot(mds)
 plot(mds, type='t', display=c('site'))
 
 # Adonis
-adonis(formula = vdist~Extraction.date + Treatment + Farm, data = metadata3, method = "bray")
+adonis(formula = vdist~Extraction.date + Treatment, data = data.frame(metadata3), method = "bray")
 
 # Plot by date/treatment
 mds_points = as.data.frame(mds$points)
@@ -209,32 +208,29 @@ metadata4 %>% ggplot(aes(x=MDS1, y=MDS2, color=Treatment)) + geom_point()
 
 
 # CCA on full genus info.
-ord = cca(tfull.genus~Extraction.date + Treatment + Farm, data=metadata4, method='bray')
+ord = cca(tfull.genus~Extraction.date + Treatment, data=metadata4, method='bray')
 
 screeplot(ord)
 plot(ord)
-#summary(ord)
 
 ggord(ord, metadata4$Farm, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
 ggord(ord, metadata4$Treatment, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
 ggord(ord, metadata4$Extraction.date, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
 
-# Anova of terms
+# Anova of terms - full genus
 anova(ord, by="term")
 
-
 # CCA on restricted (pathogenic) genus
-ord = cca(tgenus~Extraction.date + Treatment + Farm, data=metadata4, method='bray')
+ord = cca(tgenus~Extraction.date + Treatment, data=metadata4, method='bray')
 
 screeplot(ord)
 plot(ord)
-#summary(ord)
 
 ggord(ord, metadata4$Farm, txt=NULL, xlims=c(-15, 15), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
 ggord(ord, metadata4$Treatment, txt=NULL, xlims=c(-30, 30), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
 ggord(ord, metadata4$Extraction.date, txt=NULL, xlims=c(-30, 30), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
 
-# Anova of terms
+# Anova of terms - path. genus
 anova(ord, by="term")
 
 ```
@@ -442,7 +438,6 @@ shannon = apply(full.species2,2,diversity,index="shannon")
 shannon
 
 # Box plot: Shannon diversity
-
 shannon_matrix = as.matrix(shannon)
 shannon_matrix = cbind(shannon_matrix, rep(c("Moribund", "Harvest"), c(21,10)))
 
@@ -500,13 +495,13 @@ unique = as.matrix(moribund_species2[!(moribund_species2 %in% harvest_species2)]
 unique = cbind(unique, moribund_species[unique[,1],])
 unique = unique[order(unique[,2]),]
 unique = as.matrix(unique[,-1])
-write.csv(unique, "species_unique_moribund.csv")
+# write.csv(unique, "species_unique_moribund.csv")
 
 
 
 
 # CCA on full species (normalised earlier)
-ord = cca(t(full.species2)~Extraction.date + Treatment + Farm, data=metadata4, method='bray')
+ord = cca(t(full.species2)~Extraction.date + Treatment, data=metadata4, method='bray')
 plot(ord)
 
 ggord(ord, metadata4$Farm, txt=NULL, xlims=c(-6, 6), addsize=0.5, poly=F, size=4, repel=T, alpha=0.75)
